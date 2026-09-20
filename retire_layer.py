@@ -19,8 +19,10 @@ level or buried ten levels deep) shows up as its own entry.
 
 WHAT IT DOES
 ------------
-    1. Prompts for a "source" layer (to retire) and a "target" layer
-       (where its contents should move).
+    1. Prompts for one or more "source" layers to retire, via a list box
+       that supports shift/ctrl-click multi-select, then a single "target"
+       layer (where their contents should move). Each source layer is
+       processed independently.
     2. Re-layers ordinary top-level document objects on the source layer
        (this also covers block INSTANCES sitting on that layer).
     3. Walks every block DEFINITION in the document and re-layers any of
@@ -79,25 +81,10 @@ def _layer_is_empty(doc, layer_index):
     return True
 
 
-def ReassignBlockContentLayer():
-    doc = sc.doc
-
-    source_name = rs.GetLayer("Select the layer you want to retire")
-    if not source_name:
-        return
-    target_name = rs.GetLayer("Select the layer to move its contents to")
-    if not target_name:
-        return
-    if source_name == target_name:
-        print("Source and target are the same layer -- nothing to do.")
-        return
-
-    source_index = _layer_index_by_name(doc, source_name)
-    target_index = _layer_index_by_name(doc, target_name)
-    if source_index < 0 or target_index < 0:
-        print("Could not resolve one of the layers -- aborting.")
-        return
-
+def _retire_one_layer(doc, source_index, source_name, target_index, target_name):
+    """Re-layers everything on source_index onto target_index, then deletes
+    the source layer if nothing references it anymore. Returns a one-line
+    summary string."""
     changed_top_level = 0
     changed_in_blocks = 0
     skipped_linked = set()
@@ -130,13 +117,11 @@ def ReassignBlockContentLayer():
                 obj.CommitChanges()
                 changed_in_blocks += 1
 
-    sc.doc.Views.Redraw()
-
-    print("Re-layered {0} top-level object(s) and {1} object(s) inside block definitions.".format(
-        changed_top_level, changed_in_blocks))
+    print("'{0}': re-layered {1} top-level object(s) and {2} object(s) inside block definitions.".format(
+        source_name, changed_top_level, changed_in_blocks))
 
     if skipped_linked:
-        print("Skipped {0} linked block definition(s) -- fix these in their source file(s): {1}".format(
+        print("  Skipped {0} linked block definition(s) -- fix these in their source file(s): {1}".format(
             len(skipped_linked), ", ".join(sorted(skipped_linked))))
 
     # --- 3. Delete the source layer automatically, once confirmed empty ---
@@ -146,13 +131,52 @@ def ReassignBlockContentLayer():
     if _layer_is_empty(doc, source_index):
         ok = rs.DeleteLayer(source_name)
         if ok:
-            print("Layer '{0}' was empty -- deleted.".format(source_name))
+            print("  Layer '{0}' was empty -- deleted.".format(source_name))
         else:
-            print("Layer '{0}' appears empty but could not be deleted -- check for "
+            print("  Layer '{0}' appears empty but could not be deleted -- check for "
                   "child layers under it.".format(source_name))
     else:
-        print("Layer '{0}' still has references (likely inside a skipped linked "
+        print("  Layer '{0}' still has references (likely inside a skipped linked "
               "block) -- not deleted.".format(source_name))
+
+
+def ReassignBlockContentLayer():
+    doc = sc.doc
+
+    # rs.MultiListBox shows a standard Windows list box with multi-select
+    # built in (shift/ctrl-click), unlike rs.GetLayer() which only ever
+    # returns one layer.
+    layer_names = sorted(rs.LayerNames() or [])
+    if not layer_names:
+        print("No layers found.")
+        return
+
+    source_names = rs.MultiListBox(layer_names, "Select the layer(s) you want to retire",
+                                    "Retire Layer")
+    if not source_names:
+        return
+
+    target_name = rs.GetLayer("Select the layer to move their contents to")
+    if not target_name:
+        return
+
+    if target_name in source_names:
+        print("Target layer can't be one of the layers being retired -- aborting.")
+        return
+
+    target_index = _layer_index_by_name(doc, target_name)
+    if target_index < 0:
+        print("Could not resolve the target layer -- aborting.")
+        return
+
+    for source_name in source_names:
+        source_index = _layer_index_by_name(doc, source_name)
+        if source_index < 0:
+            print("Could not resolve layer '{0}' -- skipping.".format(source_name))
+            continue
+        _retire_one_layer(doc, source_index, source_name, target_index, target_name)
+
+    sc.doc.Views.Redraw()
 
 
 def ListLayersUsedInBlocks():
