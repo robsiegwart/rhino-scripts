@@ -215,46 +215,62 @@ def build_stringer(p, side_x):
 def build_stringer_simple(p, x_near, x_far):
     """
     Builds a notched stringer by constructing a closed planar polyline
-    in the YZ plane and extruding it in X using BrepFace extrusion.
+    in the plane x = x_near and extruding it in +X to x_far.
+
+    The profile is built already trimmed:
+      - bottom: cut by the horizontal floor plane z = 0
+      - top:    cut by a vertical XZ plane at the stringer's last vertex,
+                one full step beyond the top riser
+    The notches sit under the treads and behind the risers, including the
+    top riser, so the stringer's top flat is level with the total rise.
     """
     n    = p["num_steps"]
     run  = float(p["unit_run"])
     rise = float(p["total_rise"]) / float(n)
     sw   = float(p["stringer_width"])
     tw   = float(p["tread_thickness"])
-    thickness = float(x_far) - float(x_near)
+    rt   = float(p["riser_thickness"])
+    x0   = float(x_near)
+    thickness = float(x_far) - x0
 
-    angle  = math.atan2(rise, run)
-    dy_bot =  sw * math.sin(angle)
-    dz_bot = -sw * math.cos(angle)
+    if n < 2:
+        print("  Warning: stringer needs at least 2 steps.")
+        return None
 
-    # Build profile points in the YZ plane (X=0 plane)
-    # We'll extrude in X afterward
+    # Bottom edge of the stringer: parallel to the rake, offset
+    # perpendicular to it by the stringer width. It passes through
+    # (y_b0, z_b0) with slope rise/run.
+    angle = math.atan2(rise, run)
+    y_b0  = rt + sw * math.sin(angle)
+    z_b0  = -tw - sw * math.cos(angle)
+    slope = rise / run
+
+    y_end   = (n + 1) * run + rt                    # top-end cut plane
+    y_foot  = y_b0 + (0.0 - z_b0) / slope           # bottom edge meets floor
+    z_heel  = z_b0 + (y_end - y_b0) * slope         # bottom edge meets top cut
+    y_first = run + rt                              # back face of first riser
+
+    if not (y_first < y_foot < y_end and z_heel < n * rise):
+        print("  Warning: stringer too narrow/wide to trim for these parameters.")
+        return None
+
+    def pt(y, z):
+        return rg.Point3d(x0, y, z)
+
     pts = []
 
-    # Trace the top (notched) edge of the stringer.
-    # The first loop pass adds the bottom-front point (0, 0, 0); adding it
-    # here as well would create a zero-length segment and an invalid polyline.
-    for i in range(n):
-        yf = i * run
-        zb = i * rise
-        zt = zb + tw
-        yback = yf + run
+    # Top (notched) edge: up behind each riser (including the top riser),
+    # then along under each tread
+    for i in range(1, n + 1):
+        y = i * run + rt
+        pts.append(pt(y, (i - 1) * rise))
+        pts.append(pt(y, i * rise))
 
-        pts.append(rg.Point3d(0.0, yf,    zb))
-        pts.append(rg.Point3d(0.0, yf,    zt))
-        pts.append(rg.Point3d(0.0, yback, zt))
-
-    # Top back corner
-    pts.append(rg.Point3d(0.0, float(n) * run, float(n) * rise))
-
-    # Bottom back corner (offset along rake)
-    pts.append(rg.Point3d(0.0, float(n) * run + dy_bot, float(n) * rise + dz_bot))
-
-    # Bottom front corner (offset along rake)
-    pts.append(rg.Point3d(0.0, 0.0 + dy_bot, 0.0 + dz_bot))
-
-    # Close back to start
+    # End of the last notch, then down the top-end cut to the bottom edge,
+    # down the bottom edge to the floor, then along the floor back to the start
+    pts.append(pt(y_end, n * rise))
+    pts.append(pt(y_end, z_heel))
+    pts.append(pt(y_foot, 0.0))
     pts.append(pts[0])
 
     # Build the polyline and convert to NurbsCurve for extrusion
@@ -283,11 +299,6 @@ def build_stringer_simple(p, x_near, x_far):
     capped = brep.CapPlanarHoles(sc.doc.ModelAbsoluteTolerance)
     if capped:
         brep = capped
-
-    # Move to correct X position, then seat the stringer under the treads:
-    # back (+Y) by the riser thickness and down (-Z) by the tread thickness
-    xform = rg.Transform.Translation(x_near, float(p["riser_thickness"]), -tw)
-    brep.Transform(xform)
 
     return brep
 # ---------------------------------------------------------------------------
@@ -421,15 +432,15 @@ def main():
     rs.EnableRedraw(False)
     added = {"treads": 0, "risers": 0, "stringers": 0}
 
-    # --- Treads ---
-    for i in range(n):
+    # --- Treads (skip tread 0 — the stair starts with a riser at the floor) ---
+    for i in range(1, n):
         brep = build_tread(p, i, x_tread_left, x_tread_right)
         if brep:
             add_brep(brep, "Stairs::Treads")
             added["treads"] += 1
 
-    # --- Risers (skip riser 0 — open bottom on most stairs) ---
-    for i in range(1, n):
+    # --- Risers 1..n (riser n is the top riser, reaching the full total rise) ---
+    for i in range(1, n + 1):
         brep = build_riser(p, i, x_tread_left, x_tread_right)
         if brep:
             add_brep(brep, "Stairs::Risers")
