@@ -13,6 +13,7 @@ Parameters:
   - Tread overhang front (nosing projection beyond riser face)
   - Tread overhang side (projection beyond stringer face)
   - Nosing radius (front-edge fillet)
+  - Riser board thickness
 
 Coordinate system:
   - Stairs run in the +Y direction
@@ -44,6 +45,7 @@ DEFAULTS = {
     "tread_overhang_front": 1.25,    # nosing projection past riser face
     "tread_overhang_side":  0.75,    # projection past stringer face each side
     "nosing_radius":        0.25,    # front-edge fillet radius
+    "riser_thickness":      0.75,    # riser board thickness
 }
 
 
@@ -65,6 +67,7 @@ def get_parameters():
         "Tread overhang front (nosing)",
         "Tread overhang side",
         "Nosing fillet radius",
+        "Riser board thickness (e.g. 0.75)",
     ]
 
     defaults = [
@@ -78,6 +81,7 @@ def get_parameters():
         str(d["tread_overhang_front"]),
         str(d["tread_overhang_side"]),
         str(d["nosing_radius"]),
+        str(d["riser_thickness"]),
     ]
 
     results = rs.PropertyListBox(prompts, defaults, "Stair Parameters", "Generate Stairs")
@@ -96,6 +100,7 @@ def get_parameters():
             "tread_overhang_front": float(results[7]),
             "tread_overhang_side":  float(results[8]),
             "nosing_radius":        float(results[9]),
+            "riser_thickness":      float(results[10]),
         }
     except (ValueError, IndexError) as e:
         rs.MessageBox("Invalid input: {}".format(e), title="Stair Generator")
@@ -227,9 +232,9 @@ def build_stringer_simple(p, x_near, x_far):
     # We'll extrude in X afterward
     pts = []
 
-    # Trace the top (notched) edge of the stringer
-    pts.append(rg.Point3d(0.0, 0.0, 0.0))  # bottom front
-
+    # Trace the top (notched) edge of the stringer.
+    # The first loop pass adds the bottom-front point (0, 0, 0); adding it
+    # here as well would create a zero-length segment and an invalid polyline.
     for i in range(n):
         yf = i * run
         zb = i * rise
@@ -268,18 +273,20 @@ def build_stringer_simple(p, x_near, x_far):
 
     # Extrude the curve in the X direction
     extrude_vec = rg.Vector3d(thickness, 0.0, 0.0)
-    brep = rg.Brep.CreateFromExtrusion(curve, extrude_vec)
-    if brep is None:
+    srf = rg.Surface.CreateExtrusion(curve, extrude_vec)
+    if srf is None:
         print("  Warning: stringer extrusion failed.")
         return None
+    brep = srf.ToBrep()
 
     # Cap the extrusion
-    capped = brep.CapPlanarHoles(0.001)
+    capped = brep.CapPlanarHoles(sc.doc.ModelAbsoluteTolerance)
     if capped:
         brep = capped
 
-    # Move to correct X position
-    xform = rg.Transform.Translation(x_near, 0.0, 0.0)
+    # Move to correct X position, then seat the stringer under the treads:
+    # back (+Y) by the riser thickness and down (-Z) by the tread thickness
+    xform = rg.Transform.Translation(x_near, float(p["riser_thickness"]), -tw)
     brep.Transform(xform)
 
     return brep
@@ -349,13 +356,13 @@ def build_tread(p, step_index, x_left, x_right):
 # ---------------------------------------------------------------------------
 def build_riser(p, step_index, x_left, x_right):
     """
-    Build one riser board (3/4" thick, recessed 3/4" from tread front).
+    Build one riser board (riser_thickness thick, set at the riser face).
     Returns a Brep.
     """
     n    = p["num_steps"]
     run  = p["unit_run"]
     rise = p["total_rise"] / n
-    rt   = 0.75   # riser board thickness
+    rt   = p["riser_thickness"]
 
     i = step_index
 
@@ -399,15 +406,15 @@ def main():
     ovs  = p["tread_overhang_side"]
 
     # X positions
-    # Stringer left:  x = 0 to st
-    # Tread region:   x = st to st + sw_
-    # Stringer right: x = st + sw_ to 2*st + sw_
-    x_str_left_near  = 0.0
-    x_str_left_far   = st
+    # Tread/riser region: x = st to st + sw_
+    # Each stringer sits under the treads with its outer face flush with
+    # the outer end of the risers.
     x_tread_left     = st
     x_tread_right    = st + sw_
-    x_str_right_near = st + sw_
-    x_str_right_far  = 2 * st + sw_
+    x_str_left_near  = x_tread_left
+    x_str_left_far   = x_tread_left + st
+    x_str_right_near = x_tread_right - st
+    x_str_right_far  = x_tread_right
 
     setup_layers()
 
