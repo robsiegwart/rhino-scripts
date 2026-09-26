@@ -1,0 +1,31 @@
+# Python bytecode (CPython 3 in Rhino 8, IronPython in Rhino 7)
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments / type-stub installs for editor autocomplete
+.venv/
+venv/
+env/
+
+# Rhino backup, lock and autosave files
+*.3dmbak
+*.rhl
+*.3dm.rhl
+RhinoAutosave*.3dm
+
+# Grasshopper backup files
+*.ghx.bak
+*.gh.bak
+
+# Editors / IDEs
+.vscode/
+.idea/
+*.swp
+*~
+
+# OS files
+Thumbs.db
+ehthumbs.db
+desktop.ini
+.DS_Store
