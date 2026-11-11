@@ -1,3 +1,7 @@
+# Binary Grasshopper files
+*.gh
+
+
 # Python bytecode (CPython 3 in Rhino 8, IronPython in Rhino 7)
 __pycache__/
 *.py[cod]
